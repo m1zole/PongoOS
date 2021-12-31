@@ -127,7 +127,7 @@ char soc_name[9] = {};
 uint32_t socnum = 0x0;
 void (*sep_boot_hook)(void);
 
-__attribute__((noinline)) void pongo_entry_cached()
+__attribute__((noinline)) void pongo_entry_cached(unsigned long long buf)
 {
     extern char preemption_over;
     preemption_over = 1;
@@ -208,6 +208,8 @@ __attribute__((noinline)) void pongo_entry_cached()
     enable_interrupts();
     timer_init();
     timer_rearm();
+
+    iprintf("SCTLR original from iboot: 0x%llx\n", buf);
 
     char has_been_preempted = 0;
     while (!gBootFlag) {
@@ -301,13 +303,20 @@ extern uint64_t gPongoSlide;
 
 _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_el1_image)(void *boot_args, void *boot_entry_point, void *trampoline))
 {
+	unsigned long long buf = 0;
     gBootArgs = (boot_args*)kernel_args;
     gTopOfKernelData = gBootArgs->topOfKernelData;
     gEntryPoint = entryp;
-    lowlevel_setup(gBootArgs->physBase & 0x7ffffffff, gBootArgs->memSize);
+    __asm__ volatile(
+        // "hallo my name is trash and i like to crash"
+        "msr TPIDR_EL1, xzr\n"
+
+        "msr DAIF, xzr\n"
+    );
+    buf = lowlevel_setup(gBootArgs->physBase & 0x7ffffffff, gBootArgs->memSize);
     rebase_pc(gPongoSlide);
     set_exception_stack_core0();
-    pongo_entry_cached();
+    pongo_entry_cached(buf);
     lowlevel_set_identity();
     rebase_pc(-gPongoSlide);
     set_exception_stack_core0();
