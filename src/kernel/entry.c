@@ -300,6 +300,7 @@ extern void set_exception_stack_core0();
 extern void lowlevel_set_identity(void);
 extern _Noreturn void jump_to_image_extended(uint64_t image, uint64_t args, uint64_t tramp, uint64_t original_image);
 extern uint64_t gPongoSlide;
+extern void fix_a7();
 
 _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_el1_image)(void *boot_args, void *boot_entry_point, void *trampoline))
 {
@@ -313,6 +314,7 @@ _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_e
 
         "msr DAIF, xzr\n"
     );
+    fix_a7();
     buf = lowlevel_setup(gBootArgs->physBase & 0x7ffffffff, gBootArgs->memSize);
     rebase_pc(gPongoSlide);
     set_exception_stack_core0();
