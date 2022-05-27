@@ -228,8 +228,6 @@ void dump_system_regs() {
 }
 
 void fix_a7() {
-    lock_take(&command_lock);
-
     __asm__ volatile(
         // "unlock the core for debugging"
         "msr OSLAR_EL1, xzr\n"
@@ -331,6 +329,7 @@ void fix_a7() {
 
         /* ARM64_REG_HID1_disLspFlushWithContextSwitch */
             "mrs     x28, S3_5_C15_C5_0\n"
+            "bic     x28, x28, #0x3000000\n"
             "orr     x28, x28, #0x2000000\n"
             "msr     S3_5_C15_C5_0, x0\n"
         /* ARM64_REG_HID1_disLspFlushWithContextSwitch end */
@@ -349,8 +348,6 @@ void fix_a7() {
             "orr     x28, x28, #(1<<13)\n"
             "msr     S3_5_c15_c5_0, x28\n"
     );
-
-    lock_release(&command_lock);
 }
 
 void command_init() {

@@ -314,7 +314,6 @@ _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_e
 
         "msr DAIF, xzr\n"
     );
-    fix_a7();
     buf = lowlevel_setup(gBootArgs->physBase & 0x7ffffffff, gBootArgs->memSize);
     rebase_pc(gPongoSlide);
     set_exception_stack_core0();
@@ -324,6 +323,7 @@ _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_e
     set_exception_stack_core0();
     gFramebuffer = (uint32_t*)gBootArgs->Video.v_baseAddr;
     lowlevel_cleanup();
+    fix_a7();
     if(gBootFlag == BOOT_FLAG_RAW)
     {
         // We're in EL1 here, but we might need to go back to EL3
