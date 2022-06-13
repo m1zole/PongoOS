@@ -290,6 +290,27 @@ __attribute__((noinline)) void pongo_entry_cached(unsigned long long buf)
         screen_fill_basecolor();
 }
 
+extern void fix_apple_common();
+extern void fix_a7();
+void apply_tunables()
+{
+    switch(socnum) {
+        case 0x8960:
+        case 0x7000:
+        case 0x7001:
+            fix_a7();
+            break;
+        case 0x8000:
+        case 0x8001:
+        case 0x8003:
+            fix_apple_common();
+            break;
+        default:
+            fix_apple_common();
+            break;
+    }
+}
+
 /*
 
     Name: pongo_entry
@@ -300,8 +321,6 @@ extern void set_exception_stack_core0();
 extern void lowlevel_set_identity(void);
 extern _Noreturn void jump_to_image_extended(uint64_t image, uint64_t args, uint64_t tramp, uint64_t original_image);
 extern uint64_t gPongoSlide;
-extern void fix_a7();
-
 _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_el1_image)(void *boot_args, void *boot_entry_point, void *trampoline))
 {
 	unsigned long long buf = 0;
@@ -323,7 +342,7 @@ _Noreturn void pongo_entry(uint64_t *kernel_args, void *entryp, void (*exit_to_e
     set_exception_stack_core0();
     gFramebuffer = (uint32_t*)gBootArgs->Video.v_baseAddr;
     lowlevel_cleanup();
-    fix_a7();
+    apply_tunables();
     if(gBootFlag == BOOT_FLAG_RAW)
     {
         // We're in EL1 here, but we might need to go back to EL3
