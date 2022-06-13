@@ -292,6 +292,7 @@ __attribute__((noinline)) void pongo_entry_cached(unsigned long long buf)
 
 extern void fix_apple_common();
 extern void fix_a7();
+extern void fix_a10();
 void apply_tunables()
 {
     switch(socnum) {
@@ -304,6 +305,11 @@ void apply_tunables()
         case 0x8001:
         case 0x8003:
             fix_apple_common();
+            break;
+        case 0x8010:
+        case 0x8011:
+        case 0x8012:
+            fix_a10();
             break;
         default:
             fix_apple_common();
