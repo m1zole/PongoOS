@@ -75,6 +75,11 @@ void pongo_main_task() {
     // Set up Secure Enclave
     sep_setup();
 
+    iprintf("fbbase = 0x%lx ", gBootArgs->Video.v_baseAddr);
+    iprintf("fbwidth = %lu ", gBootArgs->Video.v_width);
+    iprintf("fbheight = %lu ", gBootArgs->Video.v_height);
+    iprintf("fbsize = 0x%x ", gHeight * gRowPixels * 4);
+    iprintf("fbdepth = 0x%lx ", gBootArgs->Video.v_depth);
     puts("");
     puts("#==================");
     puts("#");

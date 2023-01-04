@@ -144,7 +144,7 @@ int linux_dtree_overlay(char *boot_args)
         iprintf("Failed to add framebuffer node");
         return -1;
     }
-
+    printf("gBootArgs->Video.v_baseAddr = %lx, width = %x, height = %lx, stride = %x\n", gBootArgs->Video.v_baseAddr, width, gBootArgs->Video.v_height, width * 4);
     fdt_appendprop_addrrange(fdt, node, node1, "reg", gBootArgs->Video.v_baseAddr, fb_size);
     fdt_appendprop_cell(fdt, node1, "width", width);
     fdt_appendprop_cell(fdt, node1, "height", gBootArgs->Video.v_height);
@@ -240,7 +240,7 @@ void linux_prep_boot()
 {
     uint64_t *reg = (uint64_t *)0x1feed5c00b7d00;
     uint64_t image_size = loader_xfer_recv_count;
-    size_t dest_size = 0x10000000;
+    size_t dest_size = image_size * 6;
     dt_node_t *memmap = NULL;
     int ret = 0;
 
@@ -318,7 +318,7 @@ void linux_prep_boot()
     else
         iprintf("Failed to find SEPFW region in ADT!");
 
-    gLinuxStage = (void *)alloc_contig(image_size + LINUX_DTREE_SIZE);
+    gLinuxStage = (void *)alloc_contig(dest_size + LINUX_DTREE_SIZE);
     ret = unlzma_decompress((uint8_t *)gLinuxStage, &dest_size, loader_xfer_recv_data, image_size);
     if (ret != SZ_OK)
     {

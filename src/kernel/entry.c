@@ -209,7 +209,7 @@ __attribute__((noinline)) void pongo_entry_cached(unsigned long long buf)
     timer_init();
     timer_rearm();
 
-    iprintf("SCTLR original from iboot: 0x%llx\n", buf);
+    iprintf("SCTLR original from iboot: 0x%llx ", buf);
 
     char has_been_preempted = 0;
     while (!gBootFlag) {
