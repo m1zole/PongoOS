@@ -62,6 +62,9 @@ int linux_dtree_overlay(char *boot_args)
     }
 
     ret = fdt_appendprop_addrrange(fdt, node, node1, "reg", gBootArgs->physBase, gBootArgs->memSize);
+    printf("memory @ 0x%llx-0x%llx\n", gBootArgs->physBase, gBootArgs->physBase + gBootArgs->memSize);
+
+
     if (ret < 0)
     {
         panic("Failed to fill /memory FDT node!");
@@ -144,7 +147,6 @@ int linux_dtree_overlay(char *boot_args)
         iprintf("Failed to add framebuffer node");
         return -1;
     }
-    printf("gBootArgs->Video.v_baseAddr = %lx, width = %x, height = %lx, stride = %x\n", gBootArgs->Video.v_baseAddr, width, gBootArgs->Video.v_height, width * 4);
     fdt_appendprop_addrrange(fdt, node, node1, "reg", gBootArgs->Video.v_baseAddr, fb_size);
     fdt_appendprop_cell(fdt, node1, "width", width);
     fdt_appendprop_cell(fdt, node1, "height", gBootArgs->Video.v_height);
@@ -174,6 +176,8 @@ int linux_dtree_overlay(char *boot_args)
     fdt_appendprop_addrrange(fdt, 0, node1, "reg", gBootArgs->Video.v_baseAddr, fb_size);
     fdt_appendprop(fdt, node1, "no-map", "", 0);
 
+    printf("framebuffer @ 0x%lx-0x%llx\n", gBootArgs->Video.v_baseAddr, gBootArgs->Video.v_baseAddr + fb_size);
+
     if (gBootArgs->physBase > 0x800000000)
     {
         /* Reserve TZ/low FW regions and such */
@@ -184,6 +188,7 @@ int linux_dtree_overlay(char *boot_args)
             return -1;
         }
         fdt_appendprop_addrrange(fdt, 0, node1, "reg", 0x800000000, (gBootArgs->physBase - 0x800000000));
+        printf("TZ/FW @ 0x800000000-0x%llx\n", gBootArgs->physBase);
         fdt_appendprop(fdt, node1, "no-map", "", 0);
     }
     else if (gBootArgs->physBase < 0x800000000)
@@ -240,7 +245,7 @@ void linux_prep_boot()
 {
     uint64_t *reg = (uint64_t *)0x1feed5c00b7d00;
     uint64_t image_size = loader_xfer_recv_count;
-    size_t dest_size = image_size * 6;
+    size_t dest_size = image_size * 4;
     dt_node_t *memmap = NULL;
     int ret = 0;
 
@@ -310,10 +315,12 @@ void linux_prep_boot()
     reg = dt_prop(memmap, "SEPFW", NULL);
     if (reg)
     {
+        // gEntryPoint = (void*)(reg[0] + reg[1]);
         ret = fdt_add_mem_rsv(fdt, reg[0], reg[1]);
         if (ret < 0) {
             iprintf("Failed to reserve SEPFW region!");
         }
+        printf("SEPFW @ 0x%llx - 0x%llx\n", reg[0], reg[0] + reg[1]);
     }
     else
         iprintf("Failed to find SEPFW region in ADT!");
@@ -330,13 +337,15 @@ void linux_prep_boot()
         image_size = *(uint64_t *)(gLinuxStage + 16);
 
     gLinuxFDT = (void *)((((uint64_t)gLinuxStage) + image_size + 7ull) & -8ull);
-    ret = fdt_add_mem_rsv(fdt, (uint64_t)gLinuxFDT, LINUX_DTREE_SIZE);
+    ret = fdt_add_mem_rsv(fdt, (uint64_t)gLinuxFDT - kCacheableView + 0x800000000 , LINUX_DTREE_SIZE);
     if (ret < 0)
         iprintf("Could not reserve FDT region in FDT, here be dragons..");
+    printf("FDT @ %p-0x%llx\n", gLinuxFDT - kCacheableView + 0x800000000, (uint64_t)gLinuxFDT - kCacheableView + 0x800000000 + LINUX_DTREE_SIZE);
 
     memcpy(gLinuxFDT, fdt, LINUX_DTREE_SIZE);
     gLinuxStageSize = image_size + LINUX_DTREE_SIZE;
 
+    printf("gLinuxStage @ %p-0x%llx\n", gLinuxStage, (uint64_t)gLinuxStage + gLinuxStageSize);
     gBootArgs = (void *)((((uint64_t)gEntryPoint) + image_size + 7ull) & -8ull);
     iprintf("Booting Linux: %p(%p)\n", gEntryPoint, gBootArgs);
 
