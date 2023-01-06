@@ -315,12 +315,11 @@ void linux_prep_boot()
     reg = dt_prop(memmap, "SEPFW", NULL);
     if (reg)
     {
-        // gEntryPoint = (void*)(reg[0] + reg[1]);
         ret = fdt_add_mem_rsv(fdt, reg[0], reg[1]);
         if (ret < 0) {
             iprintf("Failed to reserve SEPFW region!");
         }
-        printf("SEPFW @ 0x%llx - 0x%llx\n", reg[0], reg[0] + reg[1]);
+        printf("SEPFW @ 0x%llx-0x%llx\n", reg[0], reg[0] + reg[1]);
     }
     else
         iprintf("Failed to find SEPFW region in ADT!");
@@ -336,6 +335,14 @@ void linux_prep_boot()
     else
         image_size = *(uint64_t *)(gLinuxStage + 16);
 
+    gLinuxStageSize = image_size + LINUX_DTREE_SIZE;
+    if (((uint64_t)gEntryPoint + gLinuxStageSize) > reg[0]) {
+        printf("Linux and FDT too large, using memory after SEPFW instead. (max: 0x%llx, got: 0x%x)\n", (reg[0] - (uint64_t)gEntryPoint), gLinuxStageSize);
+        gEntryPoint = (void*)reg[1];
+    } else {
+        printf("Using memory before SEPFW for Linux and FDT. (max: 0x%llx, got: 0x%x)\n", (reg[0] - (uint64_t)gEntryPoint), gLinuxStageSize);
+    }
+
     gLinuxFDT = (void *)((((uint64_t)gLinuxStage) + image_size + 7ull) & -8ull);
     ret = fdt_add_mem_rsv(fdt, (uint64_t)gLinuxFDT - kCacheableView + 0x800000000 , LINUX_DTREE_SIZE);
     if (ret < 0)
@@ -343,13 +350,12 @@ void linux_prep_boot()
     printf("FDT @ %p-0x%llx\n", gLinuxFDT - kCacheableView + 0x800000000, (uint64_t)gLinuxFDT - kCacheableView + 0x800000000 + LINUX_DTREE_SIZE);
 
     memcpy(gLinuxFDT, fdt, LINUX_DTREE_SIZE);
-    gLinuxStageSize = image_size + LINUX_DTREE_SIZE;
-
-    printf("gLinuxStage @ %p-0x%llx\n", gLinuxStage, (uint64_t)gLinuxStage + gLinuxStageSize);
-    gBootArgs = (void *)((((uint64_t)gEntryPoint) + image_size + 7ull) & -8ull);
-    iprintf("Booting Linux: %p(%p)\n", gEntryPoint, gBootArgs);
 
     gLinuxStage = (void *)(((uint64_t)gLinuxStage) - kCacheableView + 0x800000000);
+    printf("gLinuxStage @ %p-0x%llx\n", gLinuxStage, (uint64_t)gLinuxStage + gLinuxStageSize);
+
+    gBootArgs = (void *)((((uint64_t)gEntryPoint) + image_size + 7ull) & -8ull);
+    iprintf("Booting Linux: %p(%p)\n", gEntryPoint, gBootArgs);
 }
 
 void linux_boot()
