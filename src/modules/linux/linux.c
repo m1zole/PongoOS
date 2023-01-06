@@ -358,8 +358,60 @@ void linux_prep_boot()
     iprintf("Booting Linux: %p(%p)\n", gEntryPoint, gBootArgs);
 }
 
+extern void fix_apple_common_ecore();
+extern void fix_apple_common();
+extern void fix_a7();
+extern void fix_a10();
+bool has_ecores;
+
+void apply_tunables()
+{
+    has_ecores = false;
+
+    /* Enable the FPU */
+    __asm__ volatile(
+        "mrs x28, CPACR_EL1\n"
+        "orr x28, x28, #0x300000\n"
+        "msr CPACR_EL1, x28\n"
+    );
+
+    switch(socnum) {
+        case 0x8960:
+        case 0x7000:
+        case 0x7001:
+            fix_a7();
+            break;
+        case 0x8000:
+        case 0x8001:
+        case 0x8003:
+            fix_apple_common();
+            break;
+        case 0x8010:
+        case 0x8011:
+        case 0x8012:
+            has_ecores = true;
+            fix_a10();
+            break;
+        case 0x8015:
+            has_ecores = true;
+            fix_apple_common_ecore();
+            break;
+        default:
+            has_ecores = true;
+            fix_apple_common();
+            break;
+    }
+}
+
 void linux_boot()
 {
     memcpy(gEntryPoint, gLinuxStage, gLinuxStageSize);
     gTopOfKernelData = (uint64_t)gEntryPoint + gLinuxStageSize;
+    apply_tunables();
+    __asm__ volatile(
+        // "hallo my name is trash and i like to crash"
+        "msr TPIDR_EL1, xzr\n"
+
+        "msr DAIF, xzr\n"
+    );
 }
