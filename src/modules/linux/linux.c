@@ -188,8 +188,8 @@ int linux_dtree_overlay(char *boot_args)
             return -1;
         }
         fdt_appendprop_addrrange(fdt, 0, node1, "reg", 0x800000000, (gBootArgs->physBase - 0x800000000));
-        printf("TZ/FW @ 0x800000000-0x%llx\n", gBootArgs->physBase);
         fdt_appendprop(fdt, node1, "no-map", "", 0);
+        printf("TZ/FW @ 0x800000000-0x%llx\n", gBootArgs->physBase);
     }
     else if (gBootArgs->physBase < 0x800000000)
         panic("sar how did you get under dram base");
@@ -338,7 +338,7 @@ void linux_prep_boot()
     gLinuxStageSize = image_size + LINUX_DTREE_SIZE;
     if (((uint64_t)gEntryPoint + gLinuxStageSize) > reg[0]) {
         printf("Linux and FDT too large, using memory after SEPFW instead. (max: 0x%llx, got: 0x%x)\n", (reg[0] - (uint64_t)gEntryPoint), gLinuxStageSize);
-        gEntryPoint = (void*)reg[1];
+        gEntryPoint = (void*)(reg[0] + reg[1]);
     } else {
         printf("Using memory before SEPFW for Linux and FDT. (max: 0x%llx, got: 0x%x)\n", (reg[0] - (uint64_t)gEntryPoint), gLinuxStageSize);
     }
