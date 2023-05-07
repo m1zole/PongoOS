@@ -126,7 +126,6 @@ uint32_t* follow_call(uint32_t *from)
     return target;
 }
 
-#ifdef DEV_BUILD
 struct kernel_version gKernelVersion;
 static void kpf_kernel_version_init(xnu_pf_range_t *text_const_range)
 {
@@ -154,11 +153,11 @@ static void kpf_kernel_version_init(xnu_pf_range_t *text_const_range)
     if(errno) panic("Error parsing kernel version");
     printf("Detected Kernel version Darwin: %d.%d.%d xnu: %d\n", gKernelVersion.darwinMajor, gKernelVersion.darwinMinor, gKernelVersion.darwinRevision, gKernelVersion.xnuMajor);
 }
-#endif
 
 // Imports from shellcode.S
 extern uint32_t sandbox_shellcode[], sandbox_shellcode_setuid_patch[], sandbox_shellcode_ptrs[], sandbox_shellcode_end[];
 extern uint32_t fsctl_shc[], fsctl_shc_vnode_open[], fsctl_shc_stolen_slowpath[], fsctl_shc_orig_bl[], fsctl_shc_vnode_close[], fsctl_shc_stolen_fastpath[], fsctl_shc_orig_b[], fsctl_shc_end[];
+extern uint32_t vnode_check_open_shc[], vnode_check_open_shc_ptr[], vnode_check_open_shc_end[];
 
 bool kpf_has_done_mac_mount;
 bool kpf_mac_mount_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream) {
@@ -211,6 +210,8 @@ void kpf_mac_mount_patch(xnu_pf_patchset_t* xnu_text_exec_patchset) {
     xnu_pf_maskmatch(xnu_text_exec_patchset, "mac_mount_patch1", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_mac_mount_callback);
     matches[0] = 0x5283ffc9; // movz w9, 0x1ffe
     xnu_pf_maskmatch(xnu_text_exec_patchset, "mac_mount_patch2", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_mac_mount_callback);
+    matches[0] = 0x9283ffc9;
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "mac_mount_patch3", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_mac_mount_callback);
 }
 
 bool dounmount_found;
@@ -1640,6 +1641,118 @@ static void kpf_find_shellcode_area(xnu_pf_patchset_t *xnu_text_exec_patchset)
     xnu_pf_maskmatch(xnu_text_exec_patchset, "shellcode_area", matches, masks, count, true, (void*)kpf_find_shellcode_area_callback);
 }
 
+uint32_t* proc_selfname = NULL;
+bool proc_selfname_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    if(proc_selfname)
+    {
+        DEVLOG("proc_selfname_callback: already ran, skipping...");
+        return false;
+    }
+    // Most reliable marker of a stack frame seems to be "add x29, sp, 0x...".
+    // And this function is HUGE, hence up to 2k insn.
+    uint32_t *frame = find_prev_insn(opcode_stream, 2000, 0x910003fd, 0xff8003ff);
+    if(!frame) return false;
+    
+    // Now find the insn that decrements sp. This can be either
+    // "stp ..., ..., [sp, -0x...]!" or "sub sp, sp, 0x...".
+    // Match top bit of imm on purpose, since we only want negative offsets.
+    uint32_t  *start = find_prev_insn(frame, 10, 0xa9a003e0, 0xffe003e0);
+    if(!start) start = find_prev_insn(frame, 10, 0xd10003ff, 0xff8003ff);
+    if(!start) return false;
+    
+    puts("KPF: Found proc_selfname");
+    DEVLOG("Found proc_selfname 0x%llx", xnu_ptr_to_va(start));
+    proc_selfname = start;
+    return true;
+}
+
+void kpf_proc_selfname_patch(xnu_pf_patchset_t* patchset)
+{
+    // the IDSBlastDoorService process since 16.2 does not seem to like vnode_check_open being hooked.
+    // so I will tentatively only do a normal check when this process is detected...
+    // we need to run proc_selfname and look for this function to get the process name.
+    // ...
+    // fffffff0076117cc         ldr        x8, [x0, #0x10]
+    // fffffff0076117d0         cbz        x8, loc_fffffff0076117ec
+    // fffffff0076117d4         add        x1, x8, #0x381             ; argument "src"  for method _strlcpy
+    // fffffff0076117d8         sxtw       x2, w20                    ; argument "size" for method _strlcpy
+    // fffffff0076117dc         mov        x0, x19                    ; argument "dst"  for method _strlcpy
+    // fffffff0076117e0         ldp        fp, lr, [sp, #0x10]
+    // fffffff0076117e4         ldp        x20, x19, [sp], #0x20
+    // fffffff0076117e8         b          _strlcpy
+    // fffffff0076117ec         adrp       x8, #0xfffffff007195000
+    // fffffff0076117f0         ldr        x8, [x8, #0x10]            ; _kernproc
+    // fffffff0076117f4         cbnz       x8, loc_fffffff0076117d4
+    
+    uint64_t matches[] =
+    {
+        0xf9400000, // ldr xN, [xM, ...]
+        0xb4000000, // cbz x*, ...
+        0x91000001, // add x1, xn, #imm
+        0x93407c02, // sxtw x2, wy
+        0xaa0003e0, // mov x0, xN
+        0x00000000, // ldp
+        0x00000000, // ldp
+        0x14000000, // b 0x...
+        0x90000000, // adrp
+        0xf9400000, // ldr xN, [xM, ...]
+        0xb5000000, // cbnz x*, 0x...
+    };
+    
+    uint64_t masks[] =
+    {
+        0xffc00000, // ldr xN, [xM, ...]
+        0xff000000, // cbz x*, ...
+        0xff00000f, // add xn, xn, #imm
+        0xffff7c0f, // sxtw x2, wy
+        0xffe0ffff, // mov x0, xn
+        0x00000000, // ldp
+        0x00000000, // ldp
+        0xfc000000, // b 0x...
+        0x9f000000, // adrp
+        0xffc00000, // ldr xN, [xM, ...]
+        0xff000000,
+    };
+    
+    xnu_pf_maskmatch(patchset, "proc_selfname", matches, masks, sizeof(masks)/sizeof(uint64_t), false, (void*)proc_selfname_callback);
+    
+    uint64_t i_matches[] =
+    {
+        0xf9400000, // ldr xN, [xM, ...]
+        0xb4000000, // cbz x*, ...
+        0x91000001, // add x1, xn, #imm
+        0x93407c02, // sxtw x2, wy
+        0xaa0003e0, // mov x0, xN
+        0x92800003, // mov x3, #0xffffffffffffffff
+        0x00000000, // ldp
+        0x00000000, // ldp
+        0x14000000, // b 0x...
+        0x90000000, // adrp
+        0xf9400000, // ldr xN, [xM, ...]
+        0xb5000000, // cbnz x*, 0x...
+    };
+    
+    uint64_t i_masks[] =
+    {
+        0xffc00000, // ldr xN, [xM, ...]
+        0xff000000, // cbz x*, ...
+        0xff00000f, // add xn, xn, #imm
+        0xffff7c0f, // sxtw x2, wy
+        0xffe0ffff, // mov x0, xn
+        0xffffffff,
+        0x00000000, // ldp
+        0x00000000, // ldp
+        0xfc000000, // b 0x...
+        0x9f000000, // adrp
+        0xffc00000, // ldr xN, [xM, ...]
+        0xff000000,
+    };
+    
+    xnu_pf_maskmatch(patchset, "proc_selfname", i_matches, i_masks, sizeof(i_masks)/sizeof(uint64_t), false, (void*)proc_selfname_callback);
+    
+}
+
 static kpf_component_t kpf_shellcode =
 {
     .patches =
@@ -1750,11 +1863,9 @@ static void kpf_cmd(const char *cmd, char *args)
     struct mach_header_64* hdr = xnu_header();
     xnu_pf_range_t* text_cstring_range = xnu_pf_section(hdr, "__TEXT", "__cstring");
 
-#ifdef DEV_BUILD
     xnu_pf_range_t *text_const_range = xnu_pf_section(hdr, "__TEXT", "__const");
     kpf_kernel_version_init(text_const_range);
     free(text_const_range);
-#endif
 
     // extern struct mach_header_64* xnu_pf_get_kext_header(struct mach_header_64* kheader, const char* kext_bundle_id);
 
@@ -1947,7 +2058,16 @@ static void kpf_cmd(const char *cmd, char *args)
             kpf_shared_region_root_dir_patch(xnu_text_exec_patchset);
         }
         // Signal to ramdisk that we can't have union mounts
-        checkra1n_flags |= checkrain_option_bind_mount;
+        //checkra1n_flags |= checkrain_option_bind_mount;
+    }
+    
+    if(gKernelVersion.darwinMajor == 22)
+    {
+        if(gKernelVersion.darwinMinor >= 2)
+        {
+            // ios 16.2+
+            kpf_proc_selfname_patch(xnu_text_exec_patchset);
+        }
     }
 
     xnu_pf_emit(xnu_text_exec_patchset);
@@ -2003,7 +2123,6 @@ static void kpf_cmd(const char *cmd, char *args)
     PATCH_OP(ops, mpo_vnode_check_ioctl, ret_zero);
     PATCH_OP(ops, mpo_vnode_check_link, ret_zero);
     PATCH_OP(ops, mpo_vnode_check_listextattr, ret_zero);
-    PATCH_OP(ops, mpo_vnode_check_open, open_shellcode);
     PATCH_OP(ops, mpo_vnode_check_readlink, ret_zero);
     PATCH_OP(ops, mpo_vnode_check_setattrlist, ret_zero);
     PATCH_OP(ops, mpo_vnode_check_setextattr, ret_zero);
@@ -2022,6 +2141,14 @@ static void kpf_cmd(const char *cmd, char *args)
     uint64_t update_execve = ops->mpo_cred_label_update_execve;
     PATCH_OP(ops, mpo_cred_label_update_execve, open_shellcode+8);
 
+    uint64_t check_open = ops->mpo_vnode_check_open;
+    check_open = kext_rebase_va(check_open);
+    
+    if(!proc_selfname)
+    {
+        PATCH_OP(ops, mpo_vnode_check_open, open_shellcode);
+    }
+    
     update_execve = kext_rebase_va(update_execve);
 
     uint32_t* shellcode_from = sandbox_shellcode;
@@ -2052,6 +2179,20 @@ static void kpf_cmd(const char *cmd, char *args)
     uint32_t* repatch_vnode_shellcode = &shellcode_area[4];
     *repatch_vnode_shellcode = repatch_ldr_x19_vnode_pathoff;
 
+    if(proc_selfname)
+    {
+        // for ios 16.2+
+        uint64_t* repatch_vnode_check_open_shellcode_ptrs = (uint64_t*)(vnode_check_open_shc_ptr - shellcode_from + shellcode_to);
+        if (repatch_vnode_check_open_shellcode_ptrs[0] != 0x5151515151515151) {
+            panic("Shellcode corruption");
+        }
+        repatch_vnode_check_open_shellcode_ptrs[0] = xnu_ptr_to_va(proc_selfname);
+        repatch_vnode_check_open_shellcode_ptrs[1] = check_open;
+        
+        uint64_t shellcode_delta = (uint64_t)(vnode_check_open_shc) - (uint64_t)(sandbox_shellcode);
+        PATCH_OP(ops, mpo_vnode_check_open, open_shellcode + shellcode_delta);
+    }
+    
     if(rootvp_string_match)
     {
         uint32_t *shellcode_block = shellcode_to;
