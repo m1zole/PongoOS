@@ -211,7 +211,6 @@ void kpf_mac_mount_patch(xnu_pf_patchset_t* xnu_text_exec_patchset) {
     matches[0] = 0x5283ffc9; // movz w9, 0x1ffe
     xnu_pf_maskmatch(xnu_text_exec_patchset, "mac_mount_patch2", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_mac_mount_callback);
     matches[0] = 0x9283ffc9;
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "mac_mount_patch3", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_mac_mount_callback);
 }
 
 bool dounmount_found;
@@ -2044,7 +2043,7 @@ static void kpf_cmd(const char *cmd, char *args)
         xnu_pf_patchset_destroy(xnu_plk_data_const_patchset);
     }
 
-    kpf_mac_mount_patch(xnu_text_exec_patchset);
+  //kpf_mac_mount_patch(xnu_text_exec_patchset);
     kpf_mac_dounmount_patch_0(xnu_text_exec_patchset);
     kpf_vm_map_protect_patch(xnu_text_exec_patchset);
     kpf_mac_vm_fault_enter_patch(xnu_text_exec_patchset);
