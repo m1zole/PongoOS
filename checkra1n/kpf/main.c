@@ -2085,9 +2085,10 @@ static void kpf_cmd(const char *cmd, char *args)
         //checkra1n_flags |= checkrain_option_bind_mount;
     }
     
-    if(gKernelVersion.darwinMajor == 22)
+    if(gKernelVersion.darwinMajor >= 22)
     {
-        if(gKernelVersion.darwinMinor >= 2)
+        if((gKernelVersion.darwinMajor >= 23) ||
+           ((gKernelVersion.darwinMajor == 22) && (gKernelVersion.darwinMinor >= 2)))
         {
             // ios 16.2+
             kpf_proc_selfname_patch(xnu_text_exec_patchset);
