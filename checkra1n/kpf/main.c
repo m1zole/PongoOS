@@ -379,11 +379,21 @@ static bool kpf_vm_map_protect_callback(uint32_t *opcode_stream)
     return true;
 }
 
-static bool kpf_vm_map_protect_branch(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+static bool kpf_vm_map_protect_branch(uint32_t *opcode_stream)
 {
-    int32_t off = sxt32(opcode_stream[2] >> 5, 19);
-    opcode_stream[2] = 0x14000000 | (uint32_t)off;
-    return kpf_vm_map_protect_callback(opcode_stream + 2 + off); // uint32 takes care of << 2
+    int32_t off = sxt32(*opcode_stream >> 5, 19);
+    *opcode_stream = 0x14000000 | (uint32_t)off;
+    return kpf_vm_map_protect_callback(opcode_stream + off); // uint32 takes care of << 2
+}
+
+static bool kpf_vm_map_protect_branch_long(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    return kpf_vm_map_protect_branch(opcode_stream + 2);
+}
+
+static bool kpf_vm_map_protect_branch_short(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    return kpf_vm_map_protect_branch(opcode_stream + 1);
 }
 
 static bool kpf_vm_map_protect_inline(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
@@ -472,6 +482,12 @@ static void kpf_vm_map_protect_patch(xnu_pf_patchset_t* xnu_text_exec_patchset)
     // 0xfffffff007afe524      a1000054       b.ne 0xfffffff007afe538
     // 0xfffffff007afe528      88000035       cbnz w8, 0xfffffff007afe538
     //
+    // Or this, since iOS 17:
+    //
+    // 0xfffffff0072c5f84      5f01376a       bics wzr, w10, w23
+    // 0xfffffff0072c5f88      61010054       b.ne 0xfffffff0072c5fb4
+    // 0xfffffff0072c5f8c      4801b837       tbnz w8, 0x17, 0xfffffff0072c5fb4
+    //
     // And then there's a weird carveout from iOS 15.2 to 15.7.x that has stuff inlined in variations of:
     //
     // [and w{0-15}, w{0-15}, 0x800000]                                                 | [tst x{0-15}, 0x800000]
@@ -492,6 +508,7 @@ static void kpf_vm_map_protect_patch(xnu_pf_patchset_t* xnu_text_exec_patchset)
     // /x 00061f121f180071010000540000a837:10feffff1ffeffff1f0000ff1000f8ff
     // /x e003302a1f041f72010000540000a837:f0fff0ff1ffeffff1f0000ff1000e8ff
     // /x e003302a1f041f720100005400000035:f0fff0ff1ffeffff1f0000ff100000ff
+    // /x 1f00306a010000540000a837:1ffef0ff1f0000ff1000e8ff
     // /x e003302a00041f12:f0fff0ff10feffff
     uint64_t matches_old[] = {
         0x121f0600, // and w{0-15}, w{16-31}, 6
@@ -505,7 +522,7 @@ static void kpf_vm_map_protect_patch(xnu_pf_patchset_t* xnu_text_exec_patchset)
         0xff00001f,
         0xfff80010,
     };
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_old, masks_old, sizeof(matches_old)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch);
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_old, masks_old, sizeof(matches_old)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch_long);
 
     uint64_t matches_new[] = {
         0x2a3003e0, // mvn w{0-15}, w{16-31}
@@ -519,11 +536,23 @@ static void kpf_vm_map_protect_patch(xnu_pf_patchset_t* xnu_text_exec_patchset)
         0xff00001f,
         0xffe80010,
     };
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_new, masks_new, sizeof(matches_new)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch);
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_new, masks_new, sizeof(matches_new)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch_long);
 
     matches_new[3] = 0x35000000; // cbnz w{0-15}, 0x...
     masks_new[3]   = 0xff000010;
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_new, masks_new, sizeof(matches_new)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch);
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches_new, masks_new, sizeof(matches_new)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch_long);
+
+    uint64_t matches17[] = {
+        0x6a30001f, // bics wzr, w{0-15}, w{16-31}
+        0x54000001, // b.ne 0x...
+        0x37a80000, // tbnz w{0-15}, {0x15 | 0x17}, 0x...
+    };
+    uint64_t masks17[] = {
+        0xfff0fe1f,
+        0xff00001f,
+        0xffe80010,
+    };
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "vm_map_protect", matches17, masks17, sizeof(matches17)/sizeof(uint64_t), false, (void*)kpf_vm_map_protect_branch_short);
 
     uint64_t matches_inline[] = {
         0x2a3003e0, // mvn w{0-15}, w{16-31}
@@ -1383,27 +1412,23 @@ bool vnop_rootvp_auth_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stre
     // 0xfffffff00759c9b0      087969f8       ldr x8, [x8, x9, lsl 3]
     // 0xfffffff00759c9b4      e0c30291       add x0, sp, 0xb0
     // 0xfffffff00759c9b8      00013fd6       blr x8
-    if
-    (
-        (
-            (opcode_stream[2] & 0xffc003e0) == 0xa90003e0 && // stp xN, xM, [sp, ...]
-            ((opcode_stream[2] & 0x1f) == (opcode_stream[1] & 0x1f) || ((opcode_stream[2] >> 10) & 0x1f) == (opcode_stream[1] & 0x1f)) // match reg
-        ) ||
-        (
-            (opcode_stream[2] & 0xffc003e0) == 0xF90003E0 && // str xN, [sp, ...]
-            (opcode_stream[2] & 0x1f) == (opcode_stream[1] & 0x1f) // match reg
-        )
-    )
+    uint32_t reg = opcode_stream[1] & 0x1f;
+    uint32_t op = opcode_stream[2];
+    uint32_t *sp = NULL;
+    if((op & 0xffe07fff) == (0xa9007fe0 | reg)) // stp xN, xzr, [sp, 0x...]
     {
-        // add x0, sp, 0x...
-        uint32_t *sp = find_next_insn(opcode_stream + 3, 0x10, 0x910003e0, 0xffc003ff);
-        if(sp && (sp[1] & 0xfffffc1f) == 0xd63f0000) // blr
-        {
-            puts("KPF: Found vnop_rootvp_auth");
-            // Replace the call with mov x0, 0
-            sp[1] = 0xd2800000;
-            return true;
-        }
+        sp = find_next_insn(opcode_stream + 3, 0x10, 0x910003e0, 0xffc003ff); // add x0, sp, 0x...
+    }
+    else if((op & 0xffe07fff) == (0xa9207fa0 | reg)) // stp xN, xzr, [x29, -0x...]
+    {
+        sp = find_next_insn(opcode_stream + 3, 0x10, 0xd10003a0, 0xffc003ff); // sub x0, x29, 0x...
+    }
+    if(sp && (sp[1] & 0xfffffc1f) == 0xd63f0000) // blr
+    {
+        puts("KPF: Found vnop_rootvp_auth");
+        // Replace the call with mov x0, 0
+        sp[1] = 0xd2800000;
+        return true;
     }
     return false;
 }
