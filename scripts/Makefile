@@ -34,7 +34,7 @@ ifeq ($(HOST_OS),Darwin)
 else
 ifeq ($(HOST_OS),Linux)
 	C_FLAGS     ?= -Wall -O3 -DUSE_LIBUSB=1 $(CFLAGS)
-	LD_FLAGS    ?= -lpthread -lusb-1.0 $(LDFLAGS)
+	LD_FLAGS    ?= -lpthread -lbthread -lusb-1.0 $(LDFLAGS)
 endif
 endif
 

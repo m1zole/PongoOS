@@ -27,6 +27,8 @@
 #include <errno.h>
 #include <reent.h>
 #include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <pongo.h>
 
 extern void task_load(struct task* to_task);
