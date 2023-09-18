@@ -57,3 +57,7 @@ If you want to import third-party code that cannot be licensed as such, that sha
 - The checkra1n kernel patchfinder (KPF) is in `checkra1n/kpf`.
   - This currently includes the SEP exploit, though that is to be moved into mainline PongoOS in the future.
 - A userland version of the KPF can be built from `checkra1n/kpf-test` (can only be run on arm64).
+
+## Credits
+- @kok3shidoll  
+  - ra1npoc's pongoterm.c  

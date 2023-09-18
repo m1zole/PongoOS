@@ -1,0 +1,1 @@
+../../newlib/src/newlib/libc/posix/wordexp2.h

@@ -33,7 +33,7 @@ ifeq ($(HOST_OS),Darwin)
 	LD_FLAGS    ?= -framework Foundation -framework CoreFoundation -framework IOKit $(LDFLAGS)
 else
 ifeq ($(HOST_OS),Linux)
-	C_FLAGS     ?= -Wall -O3 -DUSE_LIBUSB=1 $(CFLAGS)
+	C_FLAGS     ?= -I. -Wall -O3 -DUSE_LIBUSB=1 $(CFLAGS)
 	LD_FLAGS    ?= -lpthread -lbthread -lusb-1.0 $(LDFLAGS)
 endif
 endif
@@ -42,7 +42,7 @@ endif
 
 all: pongoterm
 
-pongoterm: pongoterm.c
+pongoterm: pongoterm.c wordexp.c wordfree.c
 	$(CC) $(C_FLAGS) -o $@ $^ $(LD_FLAGS)
 
 clean:

@@ -24,6 +24,7 @@
  * SOFTWARE.
  *
  */
+ //thanks @kok3shidoll
 #include <errno.h>
 #include <fcntl.h>              // open
 #include <pthread.h>
@@ -37,6 +38,48 @@
 #include <wordexp.h>
 #include <sys/mman.h>           // mmap, munmap
 #include <sys/stat.h>           // fstst
+#include <getopt.h>
+
+#include "headers/kpf.h"
+#include "headers/ramdisk.h"
+#include "headers/overlay.h"
+#include "headers/legacy_kpf.h"
+#include "headers/legacy_ramdisk.h"
+
+#define checkrain_option_none               0x00000000
+// KPF options
+#define checkrain_option_verbose_boot       (1 << 0)
+
+// Global options
+#define checkrain_option_safemode           (1 << 0)
+
+static char* bootArgs = NULL;
+static uint32_t kpf_flags = checkrain_option_none;
+static uint32_t checkra1n_flags = checkrain_option_none;
+
+enum AUTOBOOT_STAGE {
+    NONE,
+    SETUP_STAGE_FUSE,
+    SETUP_STAGE_SEP,
+    SEND_STAGE_KPF,
+    SETUP_STAGE_KPF,
+    SEND_STAGE_RAMDISK,
+    SETUP_STAGE_RAMDISK,
+    SEND_STAGE_OVERLAY,
+    SETUP_STAGE_OVERLAY,
+    SETUP_STAGE_KPF_FLAGS,
+    SETUP_STAGE_CHECKRAIN_FLAGS,
+    SETUP_STAGE_XARGS,
+    BOOTUP_STAGE,
+    USB_TRANSFER_ERROR,
+};
+
+enum AUTOBOOT_STAGE CURRENT_STAGE = NONE;
+
+int use_termux = 0;
+int use_legacy = 0;
+int use_safemode = 0;
+int use_verbose_boot = 0;
 
 #define LOG(fmt, ...) do { fprintf(stderr, "\x1b[1;96m" fmt "\x1b[0m\n", ##__VA_ARGS__); } while(0)
 #define ERR(fmt, ...) do { fprintf(stderr, "\x1b[1;91m" fmt "\x1b[0m\n", ##__VA_ARGS__); } while(0)
@@ -648,6 +691,12 @@ static void* io_main(void *arg)
         size_t len = 0;
         while(1)
         {
+
+            if(use_termux)
+            {
+                break;
+            }
+
             char ch;
             ssize_t s = read(0, &ch, 1);
             if(s == 0)
@@ -681,6 +730,316 @@ static void* io_main(void *arg)
         }
         if(len == 0)
         {
+            if(use_termux)
+            {
+                
+                {
+                    if(CURRENT_STAGE == NONE)
+                        CURRENT_STAGE = SETUP_STAGE_FUSE;
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_FUSE)
+                    {
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("fuse lock\n")), "fuse lock\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "fuse lock");
+                            CURRENT_STAGE = SETUP_STAGE_SEP;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_SEP)
+                    {
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("sep auto\n")), "sep auto\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "sep auto");
+                            CURRENT_STAGE = SEND_STAGE_KPF;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SEND_STAGE_KPF)
+                    {
+                        unsigned char *load_kpf;
+                        unsigned int load_kpf_len;
+                        if(use_legacy){
+                            load_kpf = legacy_kpf;
+                            load_kpf_len = legacy_kpf_len;
+                        } else{
+                            load_kpf = kpf;
+                            load_kpf_len = kpf_len;
+                        }
+                        size_t size = load_kpf_len;
+                        ret = USBControlTransfer(stuff->handle, 0x21, 1, 0, 0, 4, &size, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            ret = USBBulkUpload(stuff->handle, load_kpf, load_kpf_len);
+                            if(ret == USB_RET_SUCCESS)
+                            {
+                                LOG("/send %s\n%s: %llu bytes", "kpf", "kpf", (unsigned long long)load_kpf_len);
+                                CURRENT_STAGE = SETUP_STAGE_KPF;
+                            }
+                            else
+                            {
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                            }
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_KPF)
+                    {
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("modload\n")), "modload\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "modload");
+                            CURRENT_STAGE = SEND_STAGE_RAMDISK;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SEND_STAGE_RAMDISK)
+                    {
+                        unsigned char *load_ramdisk;
+                        unsigned int load_ramdisk_len;
+                        if(use_legacy){
+                            load_ramdisk = legacy_ramdisk;
+                            load_ramdisk_len = legacy_ramdisk_len;
+                        } else{
+                            load_ramdisk = ramdisk_dmg;
+                            load_ramdisk_len = ramdisk_dmg_len;
+                        }
+                        size_t size = load_ramdisk_len;
+                        ret = USBControlTransfer(stuff->handle, 0x21, 1, 0, 0, 4, &size, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            ret = USBBulkUpload(stuff->handle, load_ramdisk, load_ramdisk_len);
+                            if(ret == USB_RET_SUCCESS)
+                            {
+                                LOG("/send %s\n%s: %llu bytes", "ramdisk", "ramdisk", (unsigned long long)load_ramdisk_len);
+                                CURRENT_STAGE = SETUP_STAGE_RAMDISK;
+                            }
+                            else
+                            {
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                            }
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_RAMDISK)
+                    {
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("ramdisk\n")), "ramdisk\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "ramdisk");
+                            if(use_legacy){
+                                CURRENT_STAGE = SETUP_STAGE_KPF_FLAGS;
+                            } else{
+                                CURRENT_STAGE = SEND_STAGE_OVERLAY;
+                            }
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SEND_STAGE_OVERLAY)
+                    {
+                        size_t size = overlay_dmg_len;
+                        ret = USBControlTransfer(stuff->handle, 0x21, 1, 0, 0, 4, &size, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            ret = USBBulkUpload(stuff->handle, overlay_dmg, overlay_dmg_len);
+                            if(ret == USB_RET_SUCCESS)
+                            {
+                                LOG("/send %s\n%s: %llu bytes", "overlay", "overlay", (unsigned long long)overlay_dmg_len);
+                                CURRENT_STAGE = SETUP_STAGE_OVERLAY;
+                            }
+                            else
+                            {
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                            }
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_OVERLAY)
+                    {
+                        
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("overlay\n")), "overlay\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "overlay");
+                            CURRENT_STAGE = SETUP_STAGE_KPF_FLAGS;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_KPF_FLAGS)
+                    {
+                        
+                        if(use_verbose_boot)
+                        {
+                            kpf_flags |= checkrain_option_verbose_boot;
+                        }
+                        
+                        char str[64];
+                        memset(&str, 0x0, 64);
+                        sprintf(str, "kpf_flags 0x%08x\n", kpf_flags);
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen(str)), str, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            memset(&str, 0x0, 64);
+                            sprintf(str, "kpf_flags 0x%08x", kpf_flags);
+                            LOG("%s", str);
+                            CURRENT_STAGE = SETUP_STAGE_CHECKRAIN_FLAGS;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_CHECKRAIN_FLAGS)
+                    {
+                        if(use_safemode)
+                        {
+                            checkra1n_flags |= checkrain_option_safemode;
+                        }
+                        
+                        char str[64];
+                        memset(&str, 0x0, 64);
+                        sprintf(str, "checkra1n_flags 0x%08x\n", checkra1n_flags);
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen(str)), str, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            memset(&str, 0x0, 64);
+                            sprintf(str, "checkra1n_flags 0x%08x", checkra1n_flags);
+                            LOG("%s", str);
+                            CURRENT_STAGE = SETUP_STAGE_XARGS;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    
+                    if(CURRENT_STAGE == SETUP_STAGE_XARGS)
+                    {
+                        char str[256];
+                        memset(&str, 0x0, 256);
+                        
+                        char* defaultBootArgs = NULL;
+                        
+                        defaultBootArgs = "rootdev=md0";
+                        
+                        if(defaultBootArgs)
+                        {
+                            if(strlen(defaultBootArgs) > 256) {
+                                ERR("defaultBootArgs is too large!");
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                                continue;
+                            }
+                            sprintf(str, "%s", defaultBootArgs);
+                        }
+                        
+                        if(bootArgs)
+                        {
+                            // sprintf(str, "xargs %s\n", bootArgs);
+                            if((strlen(str) + strlen(bootArgs)) > 256) {
+                                ERR("bootArgs is too large!");
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                                continue;
+                            }
+                            sprintf(str, "%s %s", str, bootArgs);
+                        }
+                        
+                        if(use_verbose_boot)
+                        {
+                            if((strlen(str) + sizeof("-v")) > 256) {
+                                ERR("bootArgs is too large!");
+                                CURRENT_STAGE = USB_TRANSFER_ERROR;
+                                continue;
+                            }
+                            sprintf(str, "%s %s", str, "-v");
+                        }
+                        
+                        
+                        char xstr[256 + 7];
+                        memset(&xstr, 0x0, 256 + 7);
+                        sprintf(xstr, "xargs %s\n", str);
+                        
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen(xstr)), xstr, NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", str);
+                            CURRENT_STAGE = BOOTUP_STAGE;
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == BOOTUP_STAGE)
+                    {
+                        ret = USBControlTransfer(stuff->handle, 0x21, 3, 0, 0, (uint32_t)(strlen("bootx\n")), "bootx\n", NULL);
+                        if(ret == USB_RET_SUCCESS)
+                        {
+                            LOG("%s", "bootx");
+                            exit(0);
+                        }
+                        else
+                        {
+                            CURRENT_STAGE = USB_TRANSFER_ERROR;
+                        }
+                        continue;
+                    }
+                    
+                    if(CURRENT_STAGE == USB_TRANSFER_ERROR)
+                    {
+                        ERR("WTF?!");
+                        exit(-1);
+                    }
+                }
+            }
+
             exit(0); // TODO: ok with libusb?
         }
         if(len > sizeof(buf))
@@ -820,23 +1179,70 @@ static void io_stop(stuff_t *stuff)
     }
 }
 
+void usage(const char* s)
+{
+    printf("Usage: %s [-ahsv] [-e <boot-args>]\n", s);
+    printf("\t-h, --help\t\t\t: show usage\n");
+    printf("\t-a, --autoboot\t\t\t: enable bakera1n boot mode\n");
+    printf("\t-e, --extra-bootargs <args>\t: replace bootargs\n");
+    printf("\t-s, --safemode\t\t\t: enable safe mode\n");
+    printf("\t-v, --verbose-boot\t\t: enable verbose boot\n");
+    
+    return;
+}
+
 int main(int argc, const char **argv)
 {
-    if(argc > 2)
+       if(argc < 2)
     {
-        ERR("Usage: %s [-n]", argv[0]);
+        usage(argv[0]);
         return -1;
     }
-    if(argc == 2)
-    {
-        if(strcmp(argv[1], "-n") == 0)
-        {
-            gBlockIO = 0;
-        }
-        else
-        {
-            ERR("Bad arg: %s", argv[1]);
-            return -1;
+    
+    int opt = 0;
+    static struct option longopts[] = {
+        { "help",               no_argument,       NULL, 'h' },
+        { "termux",             no_argument,       NULL, 'a' },
+        { "legacy",             no_argument,       NULL, 'l' },
+        { "extra-bootargs",     required_argument, NULL, 'e' },
+        { "safemode",           no_argument,       NULL, 's' },
+        { "verbose-boot",       no_argument,       NULL, 'v' },
+        { NULL, 0, NULL, 0 }
+    };
+    
+    while ((opt = getopt_long(argc, argv, "alhe:sv", longopts, NULL)) > 0) {
+        switch (opt) {
+            case 'h':
+                usage(argv[0]);
+                return 0;
+                
+            case 'a':
+                use_termux = 1;
+                LOG("selected: autoboot mode");
+                break;
+                
+            case 'e':
+                if (optarg) {
+                    bootArgs = strdup(optarg);
+                    LOG("set bootArgs: [%s]", bootArgs);
+                }
+                break;
+            
+            case 'l':
+                use_legacy = 1;
+                break;
+
+            case 's':
+                use_safemode = 1;
+                break;
+                
+            case 'v':
+                use_verbose_boot = 1;
+                break;
+                
+            default:
+                usage(argv[0]);
+                return -1;
         }
     }
     return pongoterm_main();
