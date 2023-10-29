@@ -157,7 +157,7 @@ static void kpf_kernel_version_init(xnu_pf_range_t *text_const_range)
 // Imports from shellcode.S
 extern uint32_t sandbox_shellcode[], sandbox_shellcode_setuid_patch[], sandbox_shellcode_ptrs[], sandbox_shellcode_end[];
 extern uint32_t vnode_check_open_shc[], vnode_check_open_shc_ptr[], vnode_check_open_shc_end[];
-extern uint32_t launchd_execve_hook[], launchd_execve_hook_ptr[];
+extern uint32_t launchd_execve_hook[], launchd_execve_hook_ptr[], launchd_execve_hook_offset[];
 
 uint32_t* _mac_mount = NULL;
 
@@ -1634,6 +1634,8 @@ uint32_t* mac_execve = NULL;
 uint32_t* mac_execve_hook = NULL;
 uint32_t* copyout = NULL;
 uint32_t* mach_vm_allocate_kernel = NULL;
+uint32_t current_map_off = -1;
+uint32_t vm_map_page_size_off = -1;
 bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
 {
     puts("KPF: Found load_init_program_at_path");
@@ -1660,6 +1662,35 @@ bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *op
     if(!start) start = find_prev_insn(frame, 10, 0xd10003ff, 0xff8003ff);
     if(!start) return false;
     
+    
+    /* xxx */
+    uint32_t *tpidr_el1 = find_next_insn(start, 0x20, 0xd538d080, 0xffffff80); // search mrs xN, tpidr_el1
+    if(!tpidr_el1) return false;
+    uint32_t reg = tpidr_el1[0] & 0x1f;
+    
+    uint32_t *ldr = find_next_insn(tpidr_el1, 10, 0xf9400000 | (reg << 5), 0xffc000e0 | (reg << 5)); // search ldr xM, [xN, #xxx]
+    if(!ldr) return false;
+    current_map_off = ((ldr[0] >> 10) & 0xfff) << 3;
+    printf("KPF: Found current_map_offset at 0x%x\n", current_map_off);
+    
+    reg = ldr[0] & 0x1f;
+    
+    uint32_t *ldrh = find_next_insn(ldr, 10, 0x79400000 | (reg << 5), 0xffc000e0 | (reg << 5));
+    if(ldrh)
+    {
+        // 1st: search ldrh
+        vm_map_page_size_off = ((ldrh[0] >> 11) & 0x7FF) << 2;
+        printf("KPF: Found vm_map_page_size offset at 0x%x\n", vm_map_page_size_off);
+    }
+    else
+    {
+        // 2nd: xnu-8019: search add
+        uint32_t *add = find_next_insn(ldr, 10, 0x91000000 | (reg << 5), 0xffc000e0 | (reg << 5));
+        if(!add) return false;
+        vm_map_page_size_off = (add[0] >> 10) & 0xfff;
+        printf("KPF: Found vm_map_page_size offset at 0x%x\n", vm_map_page_size_off);
+    }
+    
     bl = NULL;
     for(int i = 0; i < 0x80; i++)
     {
@@ -1674,6 +1705,7 @@ bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *op
     
     mach_vm_allocate_kernel = follow_call(bl);
     puts("KPF: Found mach_vm_allocate_kernel");
+    
     
     return true;
 }
@@ -2156,6 +2188,7 @@ static void kpf_cmd(const char *cmd, char *args)
     {
         uint64_t* repatch_launchd_execve_hook_ptrs = (uint64_t*)(launchd_execve_hook_ptr - shellcode_from + shellcode_to);
         uint32_t* repatch_launchd_execve_hook = (uint32_t*)(launchd_execve_hook - shellcode_from + shellcode_to);
+        uint32_t* repatch_launchd_execve_hook_offset = (uint32_t*)(launchd_execve_hook_offset - shellcode_from + shellcode_to);
         
         if (repatch_launchd_execve_hook_ptrs[0] != 0x4141414141414141) {
             panic("Shellcode corruption");
@@ -2164,6 +2197,9 @@ static void kpf_cmd(const char *cmd, char *args)
         repatch_launchd_execve_hook_ptrs[1] = xnu_ptr_to_va(_mac_mount);
         repatch_launchd_execve_hook_ptrs[2] = xnu_ptr_to_va(mach_vm_allocate_kernel);
         repatch_launchd_execve_hook_ptrs[3] = xnu_ptr_to_va(copyout);
+        
+        repatch_launchd_execve_hook_offset[0] |= ((current_map_off >> 3) & 0xfff) << 10;
+        repatch_launchd_execve_hook_offset[2] |= ((vm_map_page_size_off >> 2) & 0x7ff) << 11;
         
         uint32_t delta = (&repatch_launchd_execve_hook[0]) - mac_execve_hook;
         delta &= 0x03ffffff;
