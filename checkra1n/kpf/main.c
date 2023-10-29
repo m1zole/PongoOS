@@ -927,7 +927,6 @@ bool kpf_apfs_patches_mount(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
         return false;
     }
     puts("KPF: Found APFS mount");
-    DEVLOG("f_apfs_privcheck at 0x%llx", kext_rebase_va(xnu_ptr_to_va(f_apfs_privcheck)));
     *f_apfs_privcheck = 0xeb00001f; // cmp x0, x0
     return true;
 }
@@ -935,7 +934,8 @@ void kpf_apfs_patches(xnu_pf_patchset_t* patchset, bool have_union) {
     // there is a check in the apfs mount function that makes sure that the kernel task is calling this function (current_task() == kernel_task)
     // we also want to call it so we patch that check out
     // example from i7 13.3:
-    // 0xfffffff00692e680      08011b32       orr w8, w8, 0x20            <- we patchfind this
+    // 0xfffffff00692e67c      e8034139       ldrb w8, [sp, 0x40] ; [0x40:4]=392 <- we patchfind this
+    // 0xfffffff00692e680      08011b32       orr w8, w8, 0x20
     // 0xfffffff00692e684      e8030139       strb w8, [sp, 0x40]
     // 0xfffffff00692e688      e83b40b9       ldr w8, [sp, 0x38]  ; [0x38:4]=0
     // 0xfffffff00692e68c      e85301b9       str w8, [sp, 0x150]
@@ -948,18 +948,19 @@ void kpf_apfs_patches(xnu_pf_patchset_t* patchset, bool have_union) {
     // 0xfffffff00692e6a8      080140f9       ldr x8, [x8]
     // 0xfffffff00692e6ac      1f0008eb       cmp x0, x8 <- cmp (patches to cmp x0, x0)
     // r2 cmd:
-    // /x 08001b3200000039000000b9:1ffcffff0000c0bf000000bf
+    // /x 0000003908011b3200000039000000b9:000000ffffffffff000000ff000000ff
     uint64_t matches[] = {
-        0x321b0008, // orr w8, wX, 0x20
+        0x39400000, // ldr{b|h} w*, [x*]
+        0x321b0108, // orr w8, w8, 0x20
         0x39000000, // str{b|h} w*, [x*]
-        0xb9000000, // ldr {w|x}*, [x*]
+        0xb9000000  // str w*, [x*]
     };
     uint64_t masks[] = {
-        0xfffffc1f,
         0xbfc00000,
-        0xbf000000,
+        0xffffffff,
+        0xbfc00000,
+        0xff000000,
     };
-    
     xnu_pf_maskmatch(patchset, "apfs_patch_mount", matches, masks, sizeof(matches)/sizeof(uint64_t), true, (void*)kpf_apfs_patches_mount);
     if(have_union)
     {
