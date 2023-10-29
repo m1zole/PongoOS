@@ -157,6 +157,9 @@ static void kpf_kernel_version_init(xnu_pf_range_t *text_const_range)
 // Imports from shellcode.S
 extern uint32_t sandbox_shellcode[], sandbox_shellcode_setuid_patch[], sandbox_shellcode_ptrs[], sandbox_shellcode_end[];
 extern uint32_t vnode_check_open_shc[], vnode_check_open_shc_ptr[], vnode_check_open_shc_end[];
+extern uint32_t launchd_execve_hook[], launchd_execve_hook_ptr[];
+
+uint32_t* _mac_mount = NULL;
 
 bool kpf_has_done_mac_mount;
 bool kpf_mac_mount_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream) {
@@ -187,6 +190,23 @@ bool kpf_mac_mount_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
     // replace with a mov x8, xzr
     // this will bypass the (vp->v_mount->mnt_flag & MNT_ROOTFS) check
     mac_mount_1[0] = 0xaa1f03e8;
+    
+    // Find mac_mount top for launchd __mac_execve hook
+    // Most reliable marker of a stack frame seems to be "add x29, sp, 0x...".
+    // And this function is HUGE, hence up to 2k insn.
+    uint32_t *frame = find_prev_insn(mac_mount_1, 2000, 0x910003fd, 0xff8003ff);
+    if(!frame) return false;
+    
+    // Now find the insn that decrements sp. This can be either
+    // "stp ..., ..., [sp, -0x...]!" or "sub sp, sp, 0x...".
+    // Match top bit of imm on purpose, since we only want negative offsets.
+    uint32_t  *start = find_prev_insn(frame, 10, 0xa9a003e0, 0xffe003e0);
+    if(!start) start = find_prev_insn(frame, 10, 0xd10003ff, 0xff8003ff);
+    if(!start) return false;
+    
+    _mac_mount = start;
+    puts("KPF: Found mac_mount top");
+    
     kpf_has_done_mac_mount = true;
     xnu_pf_disable_patch(patch);
     puts("KPF: Found mac_mount");
@@ -1590,6 +1610,124 @@ void kpf_proc_selfname_patch(xnu_pf_patchset_t* patchset)
     
 }
 
+// for launchd __mac_execve hook
+uint32_t* mdevremoveall = NULL;
+bool IOSecureBSDRoot_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    // Prevent ramdisk from being cleaned even when booted without rootdev="md0"
+    if(mdevremoveall)
+    {
+        DEVLOG("IOSecureBSDRoot_callback: already ran, skipping...");
+        return false;
+    }
+    puts("KPF: Found mdevremoveall");
+    DEVLOG("Found mdevremoveall 0x%llx", xnu_rebase_va(xnu_ptr_to_va(opcode_stream)) + 4*4);
+    
+    uint32_t insn = opcode_stream[4];
+    int32_t off = sxt32(insn >> 5, 19);
+    opcode_stream[4] = 0x14000000 | (uint32_t)off;
+    mdevremoveall = opcode_stream;
+    return true;
+}
+
+uint32_t* mac_execve = NULL;
+uint32_t* mac_execve_hook = NULL;
+uint32_t* copyout = NULL;
+uint32_t* mach_vm_allocate_kernel = NULL;
+bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    puts("KPF: Found load_init_program_at_path");
+    opcode_stream += 4;
+    mac_execve = follow_call(opcode_stream);
+    mac_execve_hook = opcode_stream;
+    puts("KPF: Found mac_execve");
+    
+    uint32_t* prebl = find_prev_insn(opcode_stream, 0x80, 0x52800302, 0xffffffff);
+    uint32_t* bl = find_next_insn(prebl, 10, 0x94000000, 0xfc000000); // bl
+    
+    copyout = follow_call(bl);
+    puts("KPF: Found copyout");
+    
+    // Most reliable marker of a stack frame seems to be "add x29, sp, 0x...".
+    // And this function is HUGE, hence up to 2k insn.
+    uint32_t *frame = find_prev_insn(opcode_stream, 2000, 0x910003fd, 0xff8003ff);
+    if(!frame) return false;
+    
+    // Now find the insn that decrements sp. This can be either
+    // "stp ..., ..., [sp, -0x...]!" or "sub sp, sp, 0x...".
+    // Match top bit of imm on purpose, since we only want negative offsets.
+    uint32_t  *start = find_prev_insn(frame, 10, 0xa9a003e0, 0xffe003e0);
+    if(!start) start = find_prev_insn(frame, 10, 0xd10003ff, 0xff8003ff);
+    if(!start) return false;
+    
+    bl = NULL;
+    for(int i = 0; i < 0x80; i++)
+    {
+        if(start[i]     == 0x52800023 &&
+           start[i + 1] == 0x52800004)
+        {
+            bl = find_next_insn(start + i, 10, 0x94000000, 0xfc000000); // bl
+            if(bl) break;
+        }
+    }
+    if(!bl) return false;
+    
+    mach_vm_allocate_kernel = follow_call(bl);
+    puts("KPF: Found mach_vm_allocate_kernel");
+    
+    return true;
+}
+
+void kpf_rmd0dyld_patch(xnu_pf_patchset_t* patchset)
+{
+    uint64_t matches[] =
+    {
+        0xd63f0100, // blr  x8
+        0x52805828, // mov  w8, #0x2c1
+        0x72bc0008, // movk w8, #0xe000, lsl #16
+        0x6b08001f, // cmp  wN, w8
+        0x54000001, // b.ne 0x...
+    };
+    uint64_t masks[] =
+    {
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xfffffc1f,
+        0xff00001f,
+    };
+    xnu_pf_maskmatch(patchset, "IOSecureBSDRoot", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)IOSecureBSDRoot_callback);
+    
+    /* i7 15.7.6
+     * fffffff0075cd178    stp     x21, x23, [sp, #0x38]
+     * fffffff0075cd17c    stp     xzr, xzr, [sp, #0x48]
+     * fffffff0075cd180    add     x1, sp, #0x38
+     * fffffff0075cd184    mov     x0, x19
+     * fffffff0075cd188    bl      __mac_execve
+     * fffffff0075cd18c    cbnz    w0, loc_fffffff0075cd1c4
+     */
+    uint64_t i_matches[] =
+    {
+        0xa903dff5, // stp  x21, x23, [sp, #0x38]
+        0xa904ffff, // stp  xzr, xzr, [sp, #0x48]
+        0x9100e3e1, // add  x1, sp, #0x38
+        0xaa1303e0, // mov  x0, x19
+        0x94000000, // bl   __mac_execve
+        0x35000000, // cbnz wN, ...
+    };
+    uint64_t i_masks[] =
+    {
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xfc000000,
+        0xff000000,
+    };
+    xnu_pf_maskmatch(patchset, "load_init_program_at_path", i_matches, i_masks, sizeof(i_masks)/sizeof(uint64_t), true, (void*)load_init_program_at_path_callback);
+}
+
+
 static kpf_component_t kpf_shellcode =
 {
     .patches =
@@ -1877,6 +2015,7 @@ static void kpf_cmd(const char *cmd, char *args)
     kpf_find_shellcode_funcs(xnu_text_exec_patchset);
     if(rootvp_string_match) // Union mounts no longer work
     {
+        kpf_rmd0dyld_patch(xnu_text_exec_patchset);
         kpf_vnop_rootvp_auth_patch(xnu_text_exec_patchset);
     }
     
@@ -2011,6 +2150,46 @@ static void kpf_cmd(const char *cmd, char *args)
         
         uint64_t shellcode_delta = (uint64_t)(vnode_check_open_shc) - (uint64_t)(sandbox_shellcode);
         PATCH_OP(ops, mpo_vnode_check_open, open_shellcode + shellcode_delta);
+    }
+    
+    if(rootvp_string_match)
+    {
+        uint64_t* repatch_launchd_execve_hook_ptrs = (uint64_t*)(launchd_execve_hook_ptr - shellcode_from + shellcode_to);
+        uint32_t* repatch_launchd_execve_hook = (uint32_t*)(launchd_execve_hook - shellcode_from + shellcode_to);
+        
+        if (repatch_launchd_execve_hook_ptrs[0] != 0x4141414141414141) {
+            panic("Shellcode corruption");
+        }
+        repatch_launchd_execve_hook_ptrs[0] = xnu_ptr_to_va(mac_execve);
+        repatch_launchd_execve_hook_ptrs[1] = xnu_ptr_to_va(_mac_mount);
+        repatch_launchd_execve_hook_ptrs[2] = xnu_ptr_to_va(mach_vm_allocate_kernel);
+        repatch_launchd_execve_hook_ptrs[3] = xnu_ptr_to_va(copyout);
+        
+        uint32_t delta = (&repatch_launchd_execve_hook[0]) - mac_execve_hook;
+        delta &= 0x03ffffff;
+        delta |= 0x94000000;
+        *mac_execve_hook = delta;
+        
+        
+//        char *launchdString = (char*)memmem((unsigned char *)text_cstring_range->cacheable_base, text_cstring_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
+//        if (!launchdString) launchdString = (char*)memmem((unsigned char *)plk_text_range->cacheable_base, plk_text_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
+//        if (!launchdString) panic("no launchd string");
+//
+//        // "/sbin/launchd" -> "/cores/loader"
+//        *(launchdString + 0) = '/';
+//        *(launchdString + 1) = 'c';
+//        *(launchdString + 2) = 'o';
+//        *(launchdString + 3) = 'r';
+//        *(launchdString + 4) = 'e';
+//        *(launchdString + 5) = 's';
+//        *(launchdString + 6) = '/';
+//        *(launchdString + 7) = 'l';
+//        *(launchdString + 8) = 'o';
+//        *(launchdString + 9) = 'a';
+//        *(launchdString +10) = 'd';
+//        *(launchdString +11) = 'e';
+//        *(launchdString +12) = 'r';
+//        puts("KPF: Changed launchd path");
     }
     
     if(!rootvp_string_match) // Only use underlying fs on union mounts
