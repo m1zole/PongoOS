@@ -235,6 +235,7 @@ vnode_check_open_orig:
 .globl _launchd_execve_hook
 .globl _launchd_execve_hook_ptr
 .globl _launchd_execve_hook_end
+.globl _launchd_execve_hook_offset
 _launchd_execve_hook:
 b          launchd_execve_hook$start
 
@@ -253,10 +254,11 @@ stur       wzr, [fp, #-0x44]
 str        xzr, [sp, #0x40]
 
 mrs        x8, tpidr_el1
-ldr        x0, [x8, #0x3c0] // current_map      // TODO: offsetfinder
+_launchd_execve_hook_offset:
+ldr        x0, [x8, #0x0] // Gets replaced with real offset by kpf
 cbz        x0, launchd_execve_hook$current_map$zero
 launchd_execve_hook$current_map$notzero:
-ldrh       w8, [x0, #0x34]  // vm_map_page_size // TODO: offsetfinder
+ldrh       w8, [x0, #0x0] // Gets replaced with real offset by kpf
 b          launchd_execve_hook$get_map_page_size
 launchd_execve_hook$current_map$zero:
 mov        w8, #0xe
