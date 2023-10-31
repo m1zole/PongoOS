@@ -227,7 +227,6 @@ br   x8
 _vnode_check_open_shc_ptr:
 proc_selfname:
 .quad 0x5151515151515151
-
 vnode_check_open_orig:
 .quad 0x5252525252525252
 
@@ -361,10 +360,10 @@ fstype:
 .align 2
 mountpoint:
 .asciz "/cores"
+
 .align 2
 _launchd_execve_hook_end:
 _sandbox_shellcode_end:
-
 
 
 // Function logic
