@@ -1843,7 +1843,9 @@ static void kpf_cmd(const char *cmd, char *args)
 
     kpf_component_t* const kpf_components[] =
     {
+#if 0
         &kpf_bindfs,
+#endif
         &kpf_developer_mode,
         &kpf_dyld,
         &kpf_launch_constraints,

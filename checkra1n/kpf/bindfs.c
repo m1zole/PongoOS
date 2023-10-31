@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#if 0
 extern uint32_t fsctl_shc[], fsctl_shc_vnode_open[], fsctl_shc_stolen_slowpath[], fsctl_shc_orig_bl[], fsctl_shc_vnode_close[], fsctl_shc_stolen_fastpath[], fsctl_shc_orig_b[], fsctl_shc_end[];
 
 static bool do_bind_mounts = false;
@@ -347,3 +348,5 @@ kpf_component_t kpf_bindfs =
         {},
     },
 };
+
+#endif
