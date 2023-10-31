@@ -245,12 +245,12 @@ stp        x26, x25, [sp, #0x50]
 stp        x24, x23, [sp, #0x60]
 stp        x22, x21, [sp, #0x70]
 stp        x20, x19, [sp, #0x80]
-stp        fp, lr, [sp, #0x90]
-add        fp, sp, #0x90
+stp        x29, x30, [sp, #0x90]
+add        x29, sp, #0x90
 mov        x19, x2
 mov        x20, x1
 mov        x21, x0
-stur       wzr, [fp, #-0x44]
+stur       wzr, [x29, #-0x44]
 str        xzr, [sp, #0x40]
 
 mrs        x8, tpidr_el1
@@ -316,7 +316,7 @@ stp        xzr, x8, [sp, #0x28]
 str        xzr, [sp, #0x38]
 mov        x0, x21       // proc
 add        x1, sp, #0x18 // &muap
-sub        x2, fp, #0x44 // retval
+sub        x2, x29, #0x44 // retval
 ldr        x8, mac_mount // call mac_mount
 blr        x8
 cbnz       w0, launchd_execve_hook$panik_2
@@ -328,7 +328,7 @@ mov        x2, x19
 ldr        x8, mac_execve
 blr        x8
 launchd_execve_hook$ret:
-ldp        fp, lr, [sp, #0x90]
+ldp        x29, x30, [sp, #0x90]
 ldp        x20, x19, [sp, #0x80]
 ldp        x22, x21, [sp, #0x70]
 ldp        x24, x23, [sp, #0x60]
