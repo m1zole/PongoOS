@@ -1467,37 +1467,6 @@ void kpf_root_livefs_patch(xnu_pf_patchset_t* patchset) {
 }
 #endif
 
-static uint32_t shellcode_count;
-static uint32_t *shellcode_area;
-
-static bool kpf_find_shellcode_area_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
-{
-    // For anything else we wouldn't want to disable the patch to make sure that
-    // we only match what we want to, but this is literally just empty space.
-    xnu_pf_disable_patch(patch);
-    shellcode_area = opcode_stream;
-    puts("KPF: Found shellcode area");
-    return true;
-}
-
-static void kpf_find_shellcode_area(xnu_pf_patchset_t *xnu_text_exec_patchset)
-{
-    // Find a place inside of the executable region that has no opcodes in it (just zeros/padding)
-    uint32_t count = shellcode_count;
-    // TODO: get rid of this
-    {
-        count += (sandbox_shellcode_end - sandbox_shellcode);
-    }
-    uint64_t matches[count];
-    uint64_t masks[count];
-    for(size_t i = 0; i < count; ++i)
-    {
-        matches[i] = 0;
-        masks[i] = 0xffffffff;
-    }
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "shellcode_area", matches, masks, count, true, (void*)kpf_find_shellcode_area_callback);
-}
-
 /* -- bakera1n -- */
 // for 16.2+ hook
 uint32_t* proc_selfname = NULL;
@@ -1763,6 +1732,37 @@ void kpf_rmd0dyld_patch(xnu_pf_patchset_t* patchset)
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", i_matches, i_masks, sizeof(i_masks)/sizeof(uint64_t), true, (void*)load_init_program_at_path_callback);
 }
 /* -- bakera1n -- */
+
+static uint32_t shellcode_count;
+static uint32_t *shellcode_area;
+
+static bool kpf_find_shellcode_area_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    // For anything else we wouldn't want to disable the patch to make sure that
+    // we only match what we want to, but this is literally just empty space.
+    xnu_pf_disable_patch(patch);
+    shellcode_area = opcode_stream;
+    puts("KPF: Found shellcode area");
+    return true;
+}
+
+static void kpf_find_shellcode_area(xnu_pf_patchset_t *xnu_text_exec_patchset)
+{
+    // Find a place inside of the executable region that has no opcodes in it (just zeros/padding)
+    uint32_t count = shellcode_count;
+    // TODO: get rid of this
+    {
+        count += (sandbox_shellcode_end - sandbox_shellcode);
+    }
+    uint64_t matches[count];
+    uint64_t masks[count];
+    for(size_t i = 0; i < count; ++i)
+    {
+        matches[i] = 0;
+        masks[i] = 0xffffffff;
+    }
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "shellcode_area", matches, masks, count, true, (void*)kpf_find_shellcode_area_callback);
+}
 
 static kpf_component_t kpf_shellcode =
 {
