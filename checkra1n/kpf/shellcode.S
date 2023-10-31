@@ -261,7 +261,7 @@ launchd_execve_hook$current_map$notzero:
 ldrh       w8, [x0, #0x0] // Gets replaced with real offset by kpf
 b          launchd_execve_hook$get_map_page_size
 launchd_execve_hook$current_map$zero:
-mov        w8, #0xe
+mov        w8, #0xe       // 16k page
 launchd_execve_hook$get_map_page_size:
 mov        w1, #0x1
 lsl        w2, w1, w8    // map_page_size
@@ -278,7 +278,7 @@ mov        x1, x22     // scratch_addr
 mov        w2, #0x4    // len
 ldr        x8, copyout
 blr        x8
-cbnz       w0, launchd_execve_hook$panik_2
+cbnz       w0, launchd_execve_hook$panik_1
 
 ldr        x8, [sp, #0x40]
 add        x23, x8, #0x8    // align
@@ -288,7 +288,7 @@ mov        x1, x23          // scratch_addr
 mov        w2, #0x7         // len
 ldr        x8, copyout
 blr        x8
-cbnz       w0, launchd_execve_hook$panik_2
+cbnz       w0, launchd_execve_hook$panik_1
 
 ldr        x8, [sp, #0x40]
 add        x24, x8, #0x8    // align
@@ -298,7 +298,7 @@ mov        x1, x24          // scratch_addr
 mov        w2, #0x9         // len
 ldr        x8, copyout
 blr        x8
-cbnz       w0, launchd_execve_hook$panik_2
+cbnz       w0, launchd_execve_hook$panik_1
 
 ldr        x8, [sp, #0x40]
 add        x1, x8, #0x10    // align
@@ -308,7 +308,7 @@ add        x0, sp, #0x8     // argv64bit
 mov        w2, #0x8         // sizeof(uint64_t)
 ldr        x8, copyout
 blr        x8
-cbnz       w0, launchd_execve_hook$panik_2
+cbnz       w0, launchd_execve_hook$panik_1
 
 stp        x22, x23, [sp, #0x18]
 ldr        x8, [sp, #0x40]
@@ -319,7 +319,7 @@ add        x1, sp, #0x18 // &muap
 sub        x2, fp, #0x44 // retval
 ldr        x8, mac_mount // call mac_mount
 blr        x8
-cbnz       w0, launchd_execve_hook$panik_3
+cbnz       w0, launchd_execve_hook$panik_2
 
 launchd_execve_hook$orig:
 mov        x0, x21
@@ -336,12 +336,10 @@ ldp        x26, x25, [sp, #0x50]
 add        sp, sp, #0xa0
 ret
 
-launchd_execve_hook$panik:
-b          launchd_execve_hook$panik
+launchd_execve_hook$panik_1:
+b          launchd_execve_hook$orig // copyout failed
 launchd_execve_hook$panik_2:
-b          launchd_execve_hook$panik_2 // copyout failed
-launchd_execve_hook$panik_3:
-b          launchd_execve_hook$panik_3 // mac_mount failed
+b          launchd_execve_hook$orig // mac_mount failed
 
 .align 3
 _launchd_execve_hook_ptr:

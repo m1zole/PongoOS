@@ -1498,7 +1498,18 @@ static void kpf_find_shellcode_area(xnu_pf_patchset_t *xnu_text_exec_patchset)
     xnu_pf_maskmatch(xnu_text_exec_patchset, "shellcode_area", matches, masks, count, true, (void*)kpf_find_shellcode_area_callback);
 }
 
+/* -- bakera1n -- */
+// for 16.2+ hook
 uint32_t* proc_selfname = NULL;
+// for 15.0+ hook
+uint32_t* mdevremoveall = NULL;
+uint32_t* mac_execve = NULL;
+uint32_t* mac_execve_hook = NULL;
+uint32_t* copyout = NULL;
+uint32_t* mach_vm_allocate_kernel = NULL;
+uint32_t current_map_off = -1;
+uint32_t vm_map_page_size_off = -1;
+
 bool proc_selfname_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
 {
     if(proc_selfname)
@@ -1611,7 +1622,6 @@ void kpf_proc_selfname_patch(xnu_pf_patchset_t* patchset)
 }
 
 // for launchd __mac_execve hook
-uint32_t* mdevremoveall = NULL;
 bool IOSecureBSDRoot_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
 {
     // Prevent ramdisk from being cleaned even when booted without rootdev="md0"
@@ -1630,12 +1640,6 @@ bool IOSecureBSDRoot_callback(struct xnu_pf_patch *patch, uint32_t *opcode_strea
     return true;
 }
 
-uint32_t* mac_execve = NULL;
-uint32_t* mac_execve_hook = NULL;
-uint32_t* copyout = NULL;
-uint32_t* mach_vm_allocate_kernel = NULL;
-uint32_t current_map_off = -1;
-uint32_t vm_map_page_size_off = -1;
 bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
 {
     puts("KPF: Found load_init_program_at_path");
@@ -1758,7 +1762,7 @@ void kpf_rmd0dyld_patch(xnu_pf_patchset_t* patchset)
     };
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", i_matches, i_masks, sizeof(i_masks)/sizeof(uint64_t), true, (void*)load_init_program_at_path_callback);
 }
-
+/* -- bakera1n -- */
 
 static kpf_component_t kpf_shellcode =
 {
@@ -2186,6 +2190,14 @@ static void kpf_cmd(const char *cmd, char *args)
     
     if(rootvp_string_match)
     {
+        // check!
+        if (!mdevremoveall) panic("no mdevremoveall");
+        if (!mac_execve) panic("no mac_execve");
+        if (!mac_execve_hook) panic("no mac_execve_hook");
+        if (!copyout) panic("no copyout");
+        if (!mach_vm_allocate_kernel) panic("no mach_vm_allocate_kernel");
+        if (current_map_off == -1 || vm_map_page_size_off == -1) panic("no offsets");
+
         uint64_t* repatch_launchd_execve_hook_ptrs = (uint64_t*)(launchd_execve_hook_ptr - shellcode_from + shellcode_to);
         uint32_t* repatch_launchd_execve_hook = (uint32_t*)(launchd_execve_hook - shellcode_from + shellcode_to);
         uint32_t* repatch_launchd_execve_hook_offset = (uint32_t*)(launchd_execve_hook_offset - shellcode_from + shellcode_to);
@@ -2206,26 +2218,27 @@ static void kpf_cmd(const char *cmd, char *args)
         delta |= 0x94000000;
         *mac_execve_hook = delta;
         
-        
-//        char *launchdString = (char*)memmem((unsigned char *)text_cstring_range->cacheable_base, text_cstring_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
-//        if (!launchdString) launchdString = (char*)memmem((unsigned char *)plk_text_range->cacheable_base, plk_text_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
-//        if (!launchdString) panic("no launchd string");
-//
-//        // "/sbin/launchd" -> "/cores/loader"
-//        *(launchdString + 0) = '/';
-//        *(launchdString + 1) = 'c';
-//        *(launchdString + 2) = 'o';
-//        *(launchdString + 3) = 'r';
-//        *(launchdString + 4) = 'e';
-//        *(launchdString + 5) = 's';
-//        *(launchdString + 6) = '/';
-//        *(launchdString + 7) = 'l';
-//        *(launchdString + 8) = 'o';
-//        *(launchdString + 9) = 'a';
-//        *(launchdString +10) = 'd';
-//        *(launchdString +11) = 'e';
-//        *(launchdString +12) = 'r';
-//        puts("KPF: Changed launchd path");
+#if 0
+        char *launchdString = (char*)memmem((unsigned char *)text_cstring_range->cacheable_base, text_cstring_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
+        if (!launchdString) launchdString = (char*)memmem((unsigned char *)plk_text_range->cacheable_base, plk_text_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
+        if (!launchdString) panic("no launchd string");
+
+        // "/sbin/launchd" -> "/cores/loader"
+        *(launchdString + 0) = '/';
+        *(launchdString + 1) = 'c';
+        *(launchdString + 2) = 'o';
+        *(launchdString + 3) = 'r';
+        *(launchdString + 4) = 'e';
+        *(launchdString + 5) = 's';
+        *(launchdString + 6) = '/';
+        *(launchdString + 7) = 'l';
+        *(launchdString + 8) = 'o';
+        *(launchdString + 9) = 'a';
+        *(launchdString +10) = 'd';
+        *(launchdString +11) = 'e';
+        *(launchdString +12) = 'r';
+        puts("KPF: Changed launchd path");
+#endif
     }
     
     if(!rootvp_string_match) // Only use underlying fs on union mounts
