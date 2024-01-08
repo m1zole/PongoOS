@@ -1771,7 +1771,7 @@ bool wtf_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
         return true;
     }
     
-    // back to the xnu-1002.4x
+    // back to the xnu-10002.4x
     puts("KPF: wtf_patch ... found eor");
     eor_w0_w8_1[0] = 0x52800020; // mov w0, #1
     
