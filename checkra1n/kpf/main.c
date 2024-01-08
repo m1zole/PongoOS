@@ -1758,6 +1758,68 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", ii_matches, ii_masks, sizeof(ii_masks)/sizeof(uint64_t), false, (void*)load_init_program_at_path_callback);
 
 }
+
+bool wtf_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+{
+    uint32_t *ret = find_next_insn(opcode_stream, 400, RET, 0xffffffff);
+    if(!ret) return false;
+    
+    // eor w0, w8, #0x1
+    uint32_t* eor_w0_w8_1 = find_prev_insn(ret, 80, 0x52000100, 0xffffffff);
+    if(!eor_w0_w8_1) {
+        puts("KPF: wtf_patch ... eor not found");
+        return true;
+    }
+    
+    // back to the xnu-1002.4x
+    puts("KPF: wtf_patch ... found eor");
+    eor_w0_w8_1[0] = 0x52800020; // mov w0, #1
+    
+    uint32_t* bfxil = find_prev_insn(opcode_stream, 400, 0xb3407f01, 0xffffffff); // bfxil x1, x24, #0x0, #0x20
+    if(!bfxil) return false;
+    bfxil -= 1;
+    
+    puts("KPF: wtf_patch ... found bfxil");
+    bfxil[0] = 0xd2e40001; // mov x1, #0x2000000000000000
+    
+    /*
+     * fffffff0072201e0 : adrp       x25, #0xfffffff00710a000
+     * fffffff0072201e4 : ldrb       w9, [x25, #0xb88]        <- patch
+     * fffffff0072201e8 : cmp        w9, #0x0
+     * fffffff0072201ec : ccmp       w8, #0x0, #0x0, ne       <- search
+     * fffffff0072201f0 : b.ne       loc_fffffff007220210
+     */
+    uint32_t* ccmp = find_prev_insn(bfxil, 80, 0x7a401900, 0xffffffff); // ccmp w8, #0x0, #0x0, ne
+    if(!ccmp) return false;
+    
+    puts("KPF: wtf_patch ... found ccmp");
+    ccmp -= 2;
+    ccmp[0] = 0x52800009; // mov w9, #0
+    
+    return true;
+}
+
+void kpf_wtf_patch(xnu_pf_patchset_t* patchset)
+{
+    // fffffff00721c080 : mov w1, #0x30
+    // fffffff00721c084 : mov w2, #0x8004
+    // fffffff00721c088 : mov x3, #0x0
+    // 01 06 80 52 82 00 90 52 03 00 80 D2
+    uint64_t matches[] =
+    {
+        0x52800601,
+        0x52900082,
+        0xd2800003,
+    };
+    uint64_t masks[] =
+    {
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+    };
+    xnu_pf_maskmatch(patchset, "WTF", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)wtf_callback);
+
+}
 /* -- bakera1n -- */
 
 static uint32_t shellcode_count;
@@ -2092,6 +2154,11 @@ static void kpf_cmd(const char *cmd, char *args)
             // ios 16.2+
             kpf_proc_selfname_patch(xnu_text_exec_patchset);
         }
+    }
+    if(gKernelVersion.darwinMajor >= 23)
+    {
+        // ios 17
+        kpf_wtf_patch(xnu_text_exec_patchset);
     }
 
     xnu_pf_emit(xnu_text_exec_patchset);
