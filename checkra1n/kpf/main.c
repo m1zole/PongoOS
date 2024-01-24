@@ -1780,7 +1780,7 @@ bool wtf_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
     bfxil -= 1;
     
     puts("KPF: wtf_patch ... found bfxil");
-    bfxil[0] = 0xd2e40001; // mov x1, #0x2000000000000000
+    bfxil[0] = 0xd2e40001; // mov x1, #0x2000000000000000 // maybe not need
     
     /*
      * fffffff0072201e0 : adrp       x25, #0xfffffff00710a000
