@@ -1716,7 +1716,7 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
      */
     uint64_t i_matches[] =
     {
-        0xa903dff5, // stp  x21, x23, [sp, #0x38]
+        0xa903dbf5, // stp  x21, x{22-23}, [sp, #0x38]
         0xa904ffff, // stp  xzr, xzr, [sp, #0x48]
         0x9100e3e1, // add  x1, sp, #0x38
         0xaa1303e0, // mov  x0, x19
@@ -1725,12 +1725,12 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
     };
     uint64_t i_masks[] =
     {
-        0xffffffff,
+        0xfffffbff,
         0xffffffff,
         0xffffffff,
         0xffffffff,
         0xfc000000,
-        0xff000000,
+        0xff00001f,
     };
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", i_matches, i_masks, sizeof(i_masks)/sizeof(uint64_t), false, (void*)load_init_program_at_path_callback);
     
@@ -1753,7 +1753,7 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
         0xffffffff,
         0xffffffff,
         0xfc000000,
-        0xff000000,
+        0xff00001f,
     };
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", ii_matches, ii_masks, sizeof(ii_masks)/sizeof(uint64_t), false, (void*)load_init_program_at_path_callback);
 
