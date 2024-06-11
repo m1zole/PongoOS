@@ -105,6 +105,17 @@ void sepfw_kpf(void* sepfw_bytes, size_t sepfw_size) {
             fiprintf(stderr, "patched out bpr check\n");
 #endif
             break;
+        } else if (insn_stream[i] == 0xe1910200) {
+            for(int j = 0; j < 10; j++)
+            {
+                if(insn_stream[i + j*4] == 0xe3500001)
+                {
+                    insn_stream[i + j*4] == 0xe1500000;
+                }
+            }
+#ifdef SEP_DEBUG
+            fiprintf(stderr, "patched out bpr check\n");
+#endif
         }
     }
 }
