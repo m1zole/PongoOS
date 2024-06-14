@@ -1961,6 +1961,7 @@ static void kpf_cmd(const char *cmd, char *args)
         &kpf_mach_port,
         &kpf_nvram,
         &kpf_shellcode,
+        &kpf_spawn_validate_persona,
         &kpf_overlay,
         &kpf_ramdisk,
         &kpf_trustcache,
