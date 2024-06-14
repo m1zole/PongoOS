@@ -2388,7 +2388,7 @@ static void kpf_cmd(const char *cmd, char *args)
 #endif
     }
     
-    if(!rootvp_string_match) // Only use underlying fs on union mounts
+    if(!rootvp_string_match || gKernelVersion.darwinMajor <= 19) // Only use underlying fs on union mounts
     {
         char *snapshotString = (char*)memmem((unsigned char *)text_cstring_range->cacheable_base, text_cstring_range->size, (uint8_t *)"com.apple.os.update-", strlen("com.apple.os.update-"));
         if (!snapshotString) snapshotString = (char*)memmem((unsigned char *)plk_text_range->cacheable_base, plk_text_range->size, (uint8_t *)"com.apple.os.update-", strlen("com.apple.os.update-"));
