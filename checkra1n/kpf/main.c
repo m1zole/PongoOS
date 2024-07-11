@@ -1445,28 +1445,6 @@ void kpf_vnop_rootvp_auth_patch(xnu_pf_patchset_t* patchset) {
     xnu_pf_maskmatch(patchset, "vnop_rootvp_auth", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)vnop_rootvp_auth_callback);
 }
 
-#if 0
-bool root_livefs_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream) {
-    puts("KPF: Found root_livefs");
-    opcode_stream[2] = NOP;
-    return true;
-}
-
-void kpf_root_livefs_patch(xnu_pf_patchset_t* patchset) {
-    uint64_t matches[] = {
-        0xF9406108, // LDR             X8, [X8,#0xC0]
-        0x3940E108, // LDRB            W8, [X8,#0x38]
-        0x37280008, // TBNZ            W8, #5, loc_FFFFFFF008E60F1C
-    };
-    uint64_t masks[] = {
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFF8001F,
-    };
-    xnu_pf_maskmatch(patchset, "root_livefs", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)root_livefs_callback);
-}
-#endif
-
 /* -- bakera1n -- */
 // for 16.2+ hook
 uint32_t* proc_selfname = NULL;
@@ -1705,8 +1683,26 @@ bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *op
             if(bl) break;
         }
     }
-    if(!bl) return false;
-    
+
+    if (!bl) {
+        for(int i = 0; i < 0x30; i++)
+        {
+            if (
+                (start[i    ] & 0xffffffff) == 0x93407d02 && // sxtw x2, w8
+                (start[i + 1] & 0xffffffff) == 0x9100a3e1 && // add  x1, sp, ...
+                (start[i + 2] & 0xffffffff) == 0x320003e3 && // orr  w3, wzr, #0x1
+                (start[i + 3] & 0xffffffff) == 0x52800004 && // mov  w4, #0x0
+                (start[i + 4] & 0xfc000000) == 0x94000000    // bl
+            )
+            {
+                bl = &start[i + 4];
+                break;
+            }
+        }
+    }
+
+	if(!bl) return false;
+
     mach_vm_allocate_kernel = follow_call(bl);
     puts("KPF: Found mach_vm_allocate_kernel");
     
@@ -1784,6 +1780,28 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
         0xff00001f,
     };
     xnu_pf_maskmatch(patchset, "load_init_program_at_path", ii_matches, ii_masks, sizeof(ii_masks)/sizeof(uint64_t), false, (void*)load_init_program_at_path_callback);
+
+    uint64_t iii_matches[] =
+    {
+        0xa903dff5, // stp  x21, x23, [sp, #0x38]
+        0xa904ffff, // stp  xzr, xzr, [sp, #0x48]
+        0x9100e3e1, // add  x1, sp, #0x38
+        0x9100c3e2, // add  x2, sp, #0x30
+        0xaa1303e0, // mov  x0, x19
+        0x94000000, // bl   __mac_execve
+        0x35000000, // cbnz wN, ...
+    };
+    uint64_t iii_masks[] =
+    {
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xffffffff,
+        0xfc000000,
+        0xff00001f,
+    };
+    xnu_pf_maskmatch(patchset, "load_init_program_at_path", iii_matches, iii_masks, sizeof(iii_masks)/sizeof(uint64_t), false, (void*)load_init_program_at_path_callback);
 
 }
 
@@ -2168,9 +2186,9 @@ static void kpf_cmd(const char *cmd, char *args)
     kpf_vm_map_protect_patch(xnu_text_exec_patchset);
     kpf_mac_vm_fault_enter_patch(xnu_text_exec_patchset);
     kpf_find_shellcode_funcs(xnu_text_exec_patchset);
+    kpf_md0oncores_patch(xnu_text_exec_patchset);
     if(rootvp_string_match) // Union mounts no longer work
     {
-        kpf_md0oncores_patch(xnu_text_exec_patchset);
         kpf_vnop_rootvp_auth_patch(xnu_text_exec_patchset);
     }
     
@@ -2312,7 +2330,7 @@ static void kpf_cmd(const char *cmd, char *args)
         PATCH_OP(ops, mpo_vnode_check_open, open_shellcode + shellcode_delta);
     }
     
-    if(rootvp_string_match)
+    //if(rootvp_string_match)
     {
         // check!
         if (!mdevremoveall) panic("no mdevremoveall");
@@ -2341,28 +2359,6 @@ static void kpf_cmd(const char *cmd, char *args)
         delta &= 0x03ffffff;
         delta |= 0x94000000;
         *mac_execve_hook = delta;
-        
-#if 0
-        char *launchdString = (char*)memmem((unsigned char *)text_cstring_range->cacheable_base, text_cstring_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
-        if (!launchdString) launchdString = (char*)memmem((unsigned char *)plk_text_range->cacheable_base, plk_text_range->size, (uint8_t *)"/sbin/launchd", strlen("/sbin/launchd"));
-        if (!launchdString) panic("no launchd string");
-
-        // "/sbin/launchd" -> "/cores/loader"
-        *(launchdString + 0) = '/';
-        *(launchdString + 1) = 'c';
-        *(launchdString + 2) = 'o';
-        *(launchdString + 3) = 'r';
-        *(launchdString + 4) = 'e';
-        *(launchdString + 5) = 's';
-        *(launchdString + 6) = '/';
-        *(launchdString + 7) = 'l';
-        *(launchdString + 8) = 'o';
-        *(launchdString + 9) = 'a';
-        *(launchdString +10) = 'd';
-        *(launchdString +11) = 'e';
-        *(launchdString +12) = 'r';
-        puts("KPF: Changed launchd path");
-#endif
     }
     
     if(!rootvp_string_match || gKernelVersion.darwinMajor <= 19) // Only use underlying fs on union mounts
